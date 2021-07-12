@@ -1,0 +1,19 @@
+{
+  "name":"asyncHttpClient",
+  "description":"Simple async HTTP",
+  "keywords":"async,tcp,ESP8266,ESP32,ESPAsyncTCP",
+  "authors":
+  {
+    "name": "Pablo Z.",
+    "maintainer": true
+  },
+  "repository":
+  {
+    "type": "git",
+    "url": "https://github.com/pablozg/asyncHttpClient.git"
+  },
+  "version": "1.0.0",
+  "license": "LGPL-3.0",
+  "frameworks": "arduino",
+  "platforms": "espressif8266"
+}
