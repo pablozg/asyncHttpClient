@@ -58,7 +58,16 @@ bool    asyncHttpClient::debug(){
 bool	asyncHttpClient::open(const char* HOST, const int PORT, const char* request){
     DEBUG_HTTP("open(%s:%d)\r\n", HOST, PORT);
     //if(_readyState != readyStateUnsent && _readyState != readyStateDone) { return false; }
-    if(_readyState != readyStateUnsent && _readyState != readyStateDone) { DEBUG_HTTP("open (request already made)\r\n"); return false; }
+    if(_readyState != readyStateUnsent && _readyState != readyStateDone) {
+        DEBUG_HTTP("open (request already made)\r\n");
+        if(_timeout && (millis() - _lastActivity) > (_timeout * 1000)){
+            DEBUG_HTTP("open timeout\r\n");
+            if (_client) { _client->close(); }
+            _HTTPcode = HTTPCODE_TIMEOUT;
+            _setReadyState(readyStateUnsent);
+        }
+        return false;
+    }
     _requestStartTime = millis();
     delete _headers;
     _rawURL = request;
@@ -112,7 +121,8 @@ int	asyncHttpClient::responseHTTPcode(){
 
 //**************************************************************************************************************
 char*	asyncHttpClient::responseText(){
-    DEBUG_HTTP("responseText()\n");
+    // DEBUG_HTTP("responseText()\n");
+    DEBUG_HTTP("responseText() %.40s... (%d)\r\n\n", _content, strlen(_content));
     _seize;
 
     if (strlen(_content) == 0) {
@@ -275,8 +285,9 @@ void  asyncHttpClient::_onPoll(AsyncClient* client){
         DEBUG_HTTP("_onPoll timeout\r\n");
         if (_client) { _client->close(); }
         _HTTPcode = HTTPCODE_TIMEOUT;
+        _setReadyState(readyStateUnsent);
     }
-    // Por analizar solución
+
     // if(_onDataCB && available()){
     //     _onDataCB(_onDataCBarg, this, available());
     // } 
@@ -289,6 +300,7 @@ void  asyncHttpClient::_onError(AsyncClient* client, int8_t error){
     DEBUG_HTTP("_onError handler error=%s\r\n", _client->errorToString(error));
     if (_client) { _client->close(); }
     _HTTPcode = error;
+    _setReadyState(readyStateUnsent);
     _release; 
 }
 
@@ -297,6 +309,8 @@ void  asyncHttpClient::_onTimeout(AsyncClient* client, uint32_t time){
     _seize;
     DEBUG_HTTP("_onTimeout handler\r\n");
     if (_client) { _client->close(); }
+    _HTTPcode = HTTPCODE_TIMEOUT;
+    _setReadyState(readyStateUnsent);
     _release; 
 }
 
