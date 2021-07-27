@@ -57,11 +57,11 @@ bool    asyncHttpClient::debug(){
 //**************************************************************************************************************
 bool	asyncHttpClient::open(const char* HOST, const int PORT, const char* request){
     DEBUG_HTTP("open(%s:%d)\r\n", HOST, PORT);
-    //if(_readyState != readyStateUnsent && _readyState != readyStateDone) { return false; }
     if(_readyState != readyStateUnsent && _readyState != readyStateDone) {
-        DEBUG_HTTP("open (request already made)\r\n");
+        DEBUG_HTTP("open(request already made)\r\n");
+        DEBUG_HTTP("open(timeout set to %d, lastActivity: %3ld)\r\n", _timeout * 1000, millis() - _lastActivity);
         if(_timeout && (millis() - _lastActivity) > (_timeout * 1000)){
-            DEBUG_HTTP("open timeout\r\n");
+            DEBUG_HTTP("open(closing connection by timeout)\r\n");
             if (_client) { _client->close(); }
             _HTTPcode = HTTPCODE_TIMEOUT;
             _setReadyState(readyStateUnsent);
@@ -74,7 +74,6 @@ bool	asyncHttpClient::open(const char* HOST, const int PORT, const char* request
     _headers = nullptr;
     _chunked = false;
     _contentRead = 0;
-    //_readyState = readyStateUnsent;
     _readyState = readyStateRequest;
 
     if( _client && _client->connected() && 
@@ -246,7 +245,7 @@ void  asyncHttpClient::_processConnection(){
     }
     _requestEndTime = millis();
     _lastActivity = 0;
-    _timeout = 0;
+    // _timeout = 0;
 }
 
 /*______________________________________________________________________________________________________________
@@ -328,7 +327,7 @@ void  asyncHttpClient::_onDisconnect(AsyncClient* client){
             (_readyState < readyStateHdrsRecvd || _contentRead < _contentLength)) {
         _HTTPcode = HTTPCODE_CONNECTION_LOST;
     }
-    _client->abort();
+    // _client->abort();
     delete _client;
     _client = nullptr;
     delete[] _connectedHost;
