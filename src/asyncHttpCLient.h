@@ -46,7 +46,7 @@
                                     DEBUG_IOTA_PORT.printf("Debug(%3ld): ", millis()-_requestStartTime);\
                                     DEBUG_IOTA_PORT.printf_P(PSTR(format),##__VA_ARGS__);}
 
-#define DEFAULT_RX_TIMEOUT 5                    // Seconds for timeout
+#define DEFAULT_RX_TIMEOUT 6                    // Seconds for timeout
 #define MAX_MESSAGE_SIZE 4999
 
 #define HTTPCODE_CONNECTION_REFUSED  (-1)
@@ -77,9 +77,7 @@ typedef enum {
     FOREACH_STATE(GENERATE_ENUM)
 } reqStates;
 
-static const char *reqStatesString[] = {
-    FOREACH_STATE(GENERATE_STRING)
-};
+static const char *reqStatesString[] __attribute__ ((unused)) = { FOREACH_STATE(GENERATE_STRING) };
 
 // typedef enum
 // {
@@ -114,6 +112,9 @@ class asyncHttpClient {
 
     typedef std::function<void(void*, asyncHttpClient*, int readyState)> readyStateChangeCB;
     typedef std::function<void(void*, asyncHttpClient*, size_t len)> onDataCB;
+    typedef std::function<void(void*, asyncHttpClient*, uint32_t time)> onTimeoutCB;
+    typedef std::function<void(void*, asyncHttpClient*)> onPollTimeoutCB;
+    typedef std::function<void(void*, asyncHttpClient*, int8_t error)> onErrorCB;
 	
   public:
     asyncHttpClient();
@@ -152,11 +153,14 @@ class asyncHttpClient {
     String  headers();                                              // Return all headers as String
 
     void    onData(onDataCB, void* arg = 0);                        // Notify when min data is available
+    void    onTimeout(onTimeoutCB, void* arg = 0);                  // Notify on request timeout
+    void    onPollTimeout(onPollTimeoutCB, void* arg = 0);          // Notify on poll timeout
+    void    onError(onErrorCB, void* arg = 0);                      // Notify on error
     size_t  available();                                            // response available
     size_t  responseLength();                                       // indicated response length or sum of chunks to date     
     int     responseHTTPcode();                                     // HTTP response code or (negative) error code
-    char*   responseText();                                         // response (whole* or partial* as string)
-    size_t  responseRead(uint8_t* buffer, size_t len);              // Read response into buffer
+    const char*   responseText();                                   // response (whole* or partial* as string)
+    const char*   responseHost();                                   // response host ip as string
     uint32_t elapsedTime();                                         // Elapsed time of in progress transaction or last completed (ms)
     String  version();                                              // Version of asyncHttpClient
 //___________________________________________________________________________________________________________________________________
@@ -183,6 +187,12 @@ class asyncHttpClient {
     void*           _readyStateChangeCBarg;     // associated user argument
     onDataCB        _onDataCB;                  // optional callback when data received
     void*           _onDataCBarg;               // associated user argument
+    onTimeoutCB     _onTimeoutCB;               // optional callback when timeout received
+    void*           _onTimeoutCBarg;            // associated user argument
+    onPollTimeoutCB _onPollTimeoutCB;           // optional callback when poll timeout received
+    void*           _onPollTimeoutCBarg;        // associated user argument
+    onErrorCB       _onErrorCB;                 // optional callback when error received
+    void*           _onErrorCBarg;              // associated user argument
 
     const char*     _rawURL;
     char*           _content;
@@ -190,7 +200,7 @@ class asyncHttpClient {
     #ifdef ESP32
     SemaphoreHandle_t threadLock;
     #endif
-
+    
     header*     _headers;                       // request or (readyState > readyStateHdrsRcvd) response headers    
 
     // Protected functions

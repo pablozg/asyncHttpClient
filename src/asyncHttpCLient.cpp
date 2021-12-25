@@ -19,6 +19,12 @@ asyncHttpClient::asyncHttpClient()
     , _readyStateChangeCBarg(nullptr)
     , _onDataCB(nullptr)
     , _onDataCBarg(nullptr)
+    , _onTimeoutCB(nullptr)
+    , _onTimeoutCBarg(nullptr)
+    , _onPollTimeoutCB(nullptr)
+    , _onPollTimeoutCBarg(nullptr)
+    , _onErrorCB(nullptr)
+    , _onErrorCBarg(nullptr)
     , _rawURL(nullptr)
     , _content(nullptr)
     , _headers(nullptr)
@@ -57,21 +63,18 @@ bool    asyncHttpClient::debug(){
 //**************************************************************************************************************
 bool	asyncHttpClient::open(const char* HOST, const int PORT, const char* request){
     DEBUG_HTTP("open(%s:%d)\r\n", HOST, PORT);
+
     if(_readyState != readyStateUnsent && _readyState != readyStateDone) {
         DEBUG_HTTP("open(request already made)\r\n");
-        DEBUG_HTTP("open(timeout set to %d, lastActivity: %3ld)\r\n", _timeout * 1000, millis() - _lastActivity);
-        if(_timeout && (millis() - _lastActivity) > (_timeout * 1000)){
-            DEBUG_HTTP("open(closing connection by timeout)\r\n");
-            if (_client) { _client->close(); }
-            _HTTPcode = HTTPCODE_TIMEOUT;
-            _setReadyState(readyStateUnsent);
-        }
         return false;
     }
+    _seize;
     _requestStartTime = millis();
     delete _headers;
+    delete[] _content;
     _rawURL = request;
     _headers = nullptr;
+    _content = nullptr;
     _chunked = false;
     _contentRead = 0;
     _readyState = readyStateRequest;
@@ -80,12 +83,9 @@ bool	asyncHttpClient::open(const char* HOST, const int PORT, const char* request
       (strcmp(HOST, _connectedHost) != 0 || PORT != _connectedPort)){ return false; }
     
     _lastActivity = millis();
+    
+    _release;
 	return _connect(HOST, PORT);
-}
-//**************************************************************************************************************
-void    asyncHttpClient::onReadyStateChange(readyStateChangeCB cb, void* arg){
-    _readyStateChangeCB = cb;
-    _readyStateChangeCBarg = arg;
 }
 
 //**************************************************************************************************************
@@ -119,18 +119,26 @@ int	asyncHttpClient::responseHTTPcode(){
 }
 
 //**************************************************************************************************************
-char*	asyncHttpClient::responseText(){
+const char*	asyncHttpClient::responseText(){
     // DEBUG_HTTP("responseText()\n");
     DEBUG_HTTP("responseText() %.40s... (%d)\r\n\n", _content, strlen(_content));
     _seize;
 
     if (strlen(_content) == 0) {
-        _release;
-        return '\0';
+        // _release;
+        // return '\0';
+        _content[0] = '\0';
     }
     
     _release; 
     return _content;
+}
+
+const char*	asyncHttpClient::responseHost(){
+    // DEBUG_HTTP("responseText()\n");
+    DEBUG_HTTP("responseHost() %s\r\n\n", _connectedHost);
+
+    return _connectedHost;
 }
 
 //**************************************************************************************************************
@@ -140,10 +148,36 @@ size_t	asyncHttpClient::responseLength(){
 }
 
 //**************************************************************************************************************
+void    asyncHttpClient::onReadyStateChange(readyStateChangeCB cb, void* arg){
+    _readyStateChangeCB = cb;
+    _readyStateChangeCBarg = arg;
+}
+
+//**************************************************************************************************************
 void	asyncHttpClient::onData(onDataCB cb, void* arg){
     DEBUG_HTTP("onData() CB set\r\n");
     _onDataCB = cb;
     _onDataCBarg = arg;
+}
+
+//**************************************************************************************************************
+void	asyncHttpClient::onTimeout(onTimeoutCB cb, void* arg){
+    DEBUG_HTTP("onTimeout() CB set\r\n");
+    _onTimeoutCB = cb;
+    _onTimeoutCBarg = arg;
+}
+
+//**************************************************************************************************************
+void	asyncHttpClient::onPollTimeout(onPollTimeoutCB cb, void* arg){
+    DEBUG_HTTP("onPollTimeout() CB set\r\n");
+    _onPollTimeoutCB = cb;
+    _onPollTimeoutCBarg = arg;
+}
+
+void	asyncHttpClient::onError(onErrorCB cb, void* arg){
+    DEBUG_HTTP("onError() CB set\r\n");
+    _onErrorCB = cb;
+    _onErrorCBarg = arg;
 }
 
 //**************************************************************************************************************
@@ -172,6 +206,7 @@ ________________________________________________________________________________
 //**************************************************************************************************************
 bool  asyncHttpClient::_connect(const char* HOST, const int PORT){
     DEBUG_HTTP("_connect()\r\n");
+    _seize;
     if( ! _client) {
         _client = new AsyncClient();
     }
@@ -191,7 +226,6 @@ bool  asyncHttpClient::_connect(const char* HOST, const int PORT){
         if( ! _client->connect(HOST, PORT)) {
             DEBUG_HTTP("!client.connect(%s, %d) failed\r\n", HOST, PORT);
             _HTTPcode = HTTPCODE_NOT_CONNECTED;
-            //_setReadyState(readyStateDone);
             _setReadyState(readyStateUnsent);
             return false;
         }
@@ -200,6 +234,8 @@ bool  asyncHttpClient::_connect(const char* HOST, const int PORT){
         _onConnect(_client);
     }
     _lastActivity = millis();
+
+    _release;
     return true;
 }
 
@@ -222,7 +258,6 @@ void  asyncHttpClient::_send(){
 void  asyncHttpClient::_setReadyState(reqStates newState){
     if(_readyState != newState){
         _readyState = newState;          
-        // DEBUG_HTTP("_setReadyState(%d)\r\n", _readyState);
         DEBUG_HTTP("_setReadyState(%s)\r\n", reqStatesString[_readyState]);
         if(_readyStateChangeCB){
             _readyStateChangeCB(_readyStateChangeCBarg, this, _readyState);
@@ -232,7 +267,9 @@ void  asyncHttpClient::_setReadyState(reqStates newState){
 
 //**************************************************************************************************************
 void  asyncHttpClient::_processConnection(){
-    char* connectionHdr = respHeaderValue("connection");
+    const char* connectionHdr = respHeaderValue("connection");
+    
+    if (_contentLength == 0 && _contentRead > 0) { _contentLength = strlen(_content); } // Falta verificar funcionamiento cuando no le envia el header contentLenght
     
     _setReadyState(readyStateDone);
     
@@ -245,7 +282,6 @@ void  asyncHttpClient::_processConnection(){
     }
     _requestEndTime = millis();
     _lastActivity = 0;
-    // _timeout = 0;
 }
 
 /*______________________________________________________________________________________________________________
@@ -278,25 +314,30 @@ void  asyncHttpClient::_onConnect(AsyncClient* client){
 
 //**************************************************************************************************************
 void  asyncHttpClient::_onPoll(AsyncClient* client){
-    _seize;
     DEBUG_HTTP("_onPoll handler\r\n");
+    _seize;
     if(_timeout && (millis() - _lastActivity) > (_timeout * 1000)){
         DEBUG_HTTP("_onPoll timeout\r\n");
-        if (_client) { _client->close(); }
+        
+        if(_onPollTimeoutCB){
+            _onPollTimeoutCB(_onPollTimeoutCBarg, this);
+        }
+        
+        // if (_client) { _client->close(); }
         _HTTPcode = HTTPCODE_TIMEOUT;
         _setReadyState(readyStateUnsent);
     }
-
-    // if(_onDataCB && available()){
-    //     _onDataCB(_onDataCBarg, this, available());
-    // } 
     _release;     
 }
 
 //**************************************************************************************************************
 void  asyncHttpClient::_onError(AsyncClient* client, int8_t error){
-    _seize;
     DEBUG_HTTP("_onError handler error=%s\r\n", _client->errorToString(error));
+    _seize;
+    if(_onErrorCB){
+        _onErrorCB(_onErrorCBarg, this, error);
+    }
+
     if (_client) { _client->close(); }
     _HTTPcode = error;
     _setReadyState(readyStateUnsent);
@@ -305,11 +346,15 @@ void  asyncHttpClient::_onError(AsyncClient* client, int8_t error){
 
 //**************************************************************************************************************
 void  asyncHttpClient::_onTimeout(AsyncClient* client, uint32_t time){
-    _seize;
     DEBUG_HTTP("_onTimeout handler\r\n");
+    _seize;
     if (_client) { _client->close(); }
     _HTTPcode = HTTPCODE_TIMEOUT;
     _setReadyState(readyStateUnsent);
+
+    if(_onTimeoutCB){
+        _onTimeoutCB(_onTimeoutCBarg, this, time);
+    }
     _release; 
 }
 
@@ -318,8 +363,6 @@ void  asyncHttpClient::_onDisconnect(AsyncClient* client){
     DEBUG_HTTP("_onDisconnect handler\r\n");
     _seize;
     
-    if (_contentRead > 0) { _setReadyState(readyStateDone); }
-    
     if(_readyState < readyStateOpened){
         _HTTPcode = HTTPCODE_NOT_CONNECTED;
     }
@@ -327,24 +370,34 @@ void  asyncHttpClient::_onDisconnect(AsyncClient* client){
             (_readyState < readyStateHdrsRecvd || _contentRead < _contentLength)) {
         _HTTPcode = HTTPCODE_CONNECTION_LOST;
     }
-    // _client->abort();
-    delete _client;
-    _client = nullptr;
-    delete[] _connectedHost;
-    delete[] _content;
-    _connectedHost = nullptr;
-    _content = nullptr;
-    _connectedPort = -1;
+
+    if (_contentRead > 0) {
+        _setReadyState(readyStateDone);
+    } else {
+        _setReadyState(readyStateUnsent);
+    }
+    
+    if (_client) {
+        _client->abort();
+        delete _client;
+        delete[] _connectedHost;
+        delete[] _content;
+        _client = nullptr;
+        _connectedHost = nullptr;
+        _content = nullptr;
+        _connectedPort = -1;
+    }
+    
     _requestEndTime = millis();
     _lastActivity = 0;
-    if (_readyState != readyStateDone) { _setReadyState(readyStateUnsent); }
+    
     _release;
 }
 
 //**************************************************************************************************************
 void  asyncHttpClient::_onData(void* data, size_t len){
-    DEBUG_HTTP("_onData handler %.16s... (%d)\r\n",(char*) data, len);
-    // DEBUG_HTTP("_onData handler %s... (%d)\r\n",(char*) data, len);
+    DEBUG_HTTP("1- _onData handler %.16s... (%d)\r\n",(char*) data, len);
+    // DEBUG_HTTP("1- _onData handler %s... (%d)\r\n",(char*) data, len); // comment in production
     _seize;
     _lastActivity = millis();
 
@@ -360,30 +413,31 @@ void  asyncHttpClient::_onData(void* data, size_t len){
         dataPointer = strstr(tempData, "\r\n\r\n");
         if ( dataPointer != NULL )
         { 
-            dataLength = strlen(dataPointer) - 4;
             dataPos = dataPointer - tempData + 4;
+            dataLength = len - dataPos;
 
             // Add end char for split headers
             strncpy (dataPointer, "\0", 1);
         }
 
-        // DEBUG_HTTP("_onData handler - Headers: %s... (%d)\r\n", tempData, strlen(tempData));
+        // DEBUG_HTTP("_onData handler - Headers: %s... (%d)\r\n", tempData, strlen(tempData)); // comment in production
+        // DEBUG_HTTP("2- _onData handler - Headers: %s... (%d), dataPos: %d, dataLength: %d\r\n", tempData, strlen(tempData), dataPos, dataLength); // comment in production
 
         if( ! _collectHeaders(tempData, len)) return;
 
-        memset(_content, 255, MAX_MESSAGE_SIZE + 1);
-        strncpy(_content, tempData + dataPos, _contentLength > 0 ? _contentLength : dataLength);
-        _content[_contentLength > 0 ? _contentLength : dataLength] = '\0';
+        memset(_content, 0, MAX_MESSAGE_SIZE + 1);
+        strncpy(_content, tempData + dataPos, dataLength);
+        _content[dataLength] = '\0';
         _contentRead = strlen(_content);
-        DEBUG_HTTP("_onData handler - Data: %.16s... (%d)\r\n", _content, strlen(_content));
-        // DEBUG_HTTP("_onData handler - Data: %s... (%d)\r\n", _content, strlen(_content));
+        DEBUG_HTTP("3- _onData handler - Data: %.16s... (%d)\r\n", _content, strlen(_content));
+        // DEBUG_HTTP("3- _onData handler - Data: %s... (%d)\r\n", _content, strlen(_content)); // comment in production
+        // DEBUG_HTTP("3- _onData handler - Data: %s... (%d), dataPos: %d, dataLength: %d, _contentLength: %d\r\n", _content, strlen(_content), dataPos, dataLength, _contentLength); // comment in production
     }   
     
     // If there's data in the buffer and not Done,
     // advance readyState to Loading.
 
     if (_readyState != readyStateDone) {
-
         if(_readyState == readyStateLoading) {
 
             // Process data chunks
@@ -393,7 +447,7 @@ void  asyncHttpClient::_onData(void* data, size_t len){
                     _content[i + dataPos] = tempData[i];
                 }
                 _content[len + dataPos] = '\0';
-                _contentRead += strlen(tempData);
+                _contentRead += len;
             } else { // Process data chunks in "transfer-encoding: chunked"
 
                 dataPointer = strtok (tempData,"\r\n");
@@ -417,7 +471,7 @@ void  asyncHttpClient::_onData(void* data, size_t len){
                 }
             }
             
-            DEBUG_HTTP("_onData handler - _contentRead: %d _contentLength: %d _contentSize: %d\r\n", _contentRead, _contentLength, strlen(_content));
+            DEBUG_HTTP("4- _onData handler - _contentRead: %d _contentLength: %d _contentSize: %d\r\n", _contentRead, _contentLength, strlen(_content));
             
             if (_chunked && chunkDataReceived) { _processConnection(); }
 
@@ -426,7 +480,8 @@ void  asyncHttpClient::_onData(void* data, size_t len){
 
     // If not chunked and all data read, close it up.
 
-    if( !_chunked && strlen(_content) == _contentLength) {
+    // if( !_chunked && strlen(_content) == _contentLength) {
+    if( !_chunked && strlen(_content) == _contentLength && _contentLength != 0) {
         _processConnection();
     }
 
@@ -448,8 +503,8 @@ bool  asyncHttpClient::_collectHeaders(char* buffer, size_t len){
     char name[50];
     uint16_t pos;
 
-            // Loop to parse off each header line.
-            // Drop out and return false if no \r\n (incomplete)
+    // Loop to parse off each header line.
+    // Drop out and return false if no \r\n (incomplete)
 
     if (_readyState != readyStateHdrsRecvd) {
         if (strncmp(buffer, "HTTP/1.", 7) == 0)
@@ -459,7 +514,6 @@ bool  asyncHttpClient::_collectHeaders(char* buffer, size_t len){
             //  DEBUG_HTTP("_collectHeaders() HTTP Code: %d\r\n", _HTTPcode);
         }
        
-        //printf ("Splitting string:\n\%s\ into tokens:\n",str);
         pch = strtok (buffer,"\r\n");
         while (pch != NULL)
         {
@@ -500,12 +554,8 @@ bool  asyncHttpClient::_collectHeaders(char* buffer, size_t len){
         DEBUG_HTTP("*transfer-encoding: chunked\r\n");
         _chunked = true;
         _contentLength = 0;
-        //_chunks = new xbuf;
-        //_chunks->write(_response, _response->available());
-        //_processChunks();
     }         
 
-    
     return true;
 }
         
