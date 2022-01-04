@@ -30,6 +30,8 @@ asyncHttpClient::asyncHttpClient()
     , _headers(nullptr)
 {
     DEBUG_HTTP("New request.");
+    _connectedHost = new char[80];
+    _content = new char[MAX_MESSAGE_SIZE + 1];
 #ifdef ESP32
     threadLock = xSemaphoreCreateRecursiveMutex();
 #endif
@@ -37,7 +39,11 @@ asyncHttpClient::asyncHttpClient()
 
 //**************************************************************************************************************
 asyncHttpClient::~asyncHttpClient(){
-    if(_client) { _client->abort(); _client->close(true); }
+    if(_client) { 
+        _client->abort(); 
+        _client->close(true);
+        delete _client;
+    }
     delete _headers;
     delete[] _content;
     delete[] _connectedHost;
@@ -71,10 +77,10 @@ bool	asyncHttpClient::open(const char* HOST, const int PORT, const char* request
     _seize;
     _requestStartTime = millis();
     delete _headers;
-    delete[] _content;
-    _rawURL = request;
     _headers = nullptr;
-    _content = nullptr;
+    // delete[] _content;
+    // _content = nullptr;
+    _rawURL = request;
     _chunked = false;
     _contentRead = 0;
     _readyState = readyStateRequest;
@@ -135,7 +141,6 @@ const char*	asyncHttpClient::responseText(){
 }
 
 const char*	asyncHttpClient::responseHost(){
-    // DEBUG_HTTP("responseText()\n");
     DEBUG_HTTP("responseHost() %s\r\n\n", _connectedHost);
 
     return _connectedHost;
@@ -210,10 +215,11 @@ bool  asyncHttpClient::_connect(const char* HOST, const int PORT){
     if( ! _client) {
         _client = new AsyncClient();
     }
-    delete[] _connectedHost;
-    delete[] _content;	
-    _connectedHost = new char[strlen(HOST) + 1];
-    _content = new char[MAX_MESSAGE_SIZE + 1];
+    // commented 03/01/2022 test optimitation
+    // delete[] _connectedHost;
+    // delete[] _content;	
+    // _connectedHost = new char[strlen(HOST) + 1];
+    // _content = new char[MAX_MESSAGE_SIZE + 1];
     strcpy(_connectedHost, HOST);
     _connectedPort = PORT;
     _client->onConnect([](void *obj, AsyncClient *client){((asyncHttpClient*)(obj))->_onConnect(client);}, this);
@@ -300,6 +306,7 @@ void  asyncHttpClient::_onConnect(AsyncClient* client){
     _client = client;
     _setReadyState(readyStateOpened);
 
+    memset(_content, 0, MAX_MESSAGE_SIZE + 1);
     _contentLength = 0;
     _contentRead = 0;
     _chunked = false;
@@ -380,11 +387,11 @@ void  asyncHttpClient::_onDisconnect(AsyncClient* client){
     if (_client) {
         _client->abort();
         delete _client;
-        delete[] _connectedHost;
-        delete[] _content;
         _client = nullptr;
-        _connectedHost = nullptr;
-        _content = nullptr;
+        // delete[] _connectedHost;
+        // delete[] _content;
+        // _connectedHost = nullptr;
+        // _content = nullptr;
         _connectedPort = -1;
     }
     
@@ -425,7 +432,7 @@ void  asyncHttpClient::_onData(void* data, size_t len){
 
         if( ! _collectHeaders(tempData, len)) return;
 
-        memset(_content, 0, MAX_MESSAGE_SIZE + 1);
+        // memset(_content, 0, MAX_MESSAGE_SIZE + 1);
         strncpy(_content, tempData + dataPos, dataLength);
         _content[dataLength] = '\0';
         _contentRead = strlen(_content);
